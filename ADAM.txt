@@ -1,0 +1,105 @@
+data empty_adsl;
+	length STUDYID $15 USUBJID $25 SUBJID $7 SITEID $7 COUNTRY $3 BRTHDT $8 AGE $8 
+		AGEU $5 AGEGR1 $40 AGEGR1N $8 SEX $1 RACE $40 RACEOTH $40 RANDDT $8 TRTSDT $8 
+		TRTEDT $8 ARM $40 TRT01P $40 TRT01A $40 TRT01PN $8 TRT01AN $8 ITTFL $1 
+		SAFFL $1 RESPFL $1;
+	label STUDYID='Study Identifier' USUBJID='Unique Subject Identifier' 
+		SUBJID='Subject Identifier for the Study' SITEID='Study Site Identifier' 
+		COUNTRY='Country' BRTHDT='Date of Birth' AGE='Age' AGEU='Age Units' 
+		AGEGR1='Pooled Age Group 1' AGEGR1N='Pooled Age Group 1 (N)' SEX='Sex' 
+		RACE='Race' RACEOTH='Race, Other, Specify' RANDDT='Date of Randomization' 
+		TRTSDT='Date of First Exposure to Treatment' 
+		TRTEDT='Date of Last Exposure to Treatment' ARM='Description of Planned Arm' 
+		TRT01P='Planned Treatment for Period 01' 
+		TRT01A='Actual Treatment for Period 01' 
+		TRT01PN='Planned Treatment for Period 01 (N)' 
+		TRT01AN='Actual Treatment for Period 01 (N)' 
+		ITTFL='Intent-To-Treat Population Flag' SAFFL='Safety Population Flag' 
+		RESPFL='Efficacy Responder Flag';
+	proc format;
+ 
+		value agegr
+		low-55='55 years'
+		55-high='>=years' ;
+		value agegr1n
+		low-55=1
+		55-high=2;
+		value armn
+		'analgezia hcl 30 mg'=1
+		'placebo'=0;
+ 	
+	data xp_chg (keep=usubjid result_6 result_base);
+	set sdtm23.xp;
+	by usubjid ;
+	retain result_base result_6 ;
+	if first.usubjid   then do ;
+	result_base=xpstresn;
+	end;
+	if visitnum=0 then result_base=xpstresn ;
+	if visitnum=2 then result_6=xpstresn ;
+	chg_frm_base =result_6 - result_base ;
+	if chg_frm_base<=-2 then resp_eff_fl='Y';
+	else resp_eff__fl ='N';
+	output;
+	run;
+
+
+	 	proc sql;
+	create table suppdm_transposed as
+	select coalesce(a.usubjid , b.usubjid) as usubjid 
+	, raceoth , randdtc , intention_treat_flag 
+	from 
+	((select usubjid,  qval as raceoth 
+	from SDTM23.suppdm
+	where qnam='RACEOTH')a
+	
+	FULL OUTER JOIN 
+	
+	(select usubjid,  qval as RANDDTC ,
+	case when qval^='' then 'Y' else '' end as intention_treat_flag
+	from SDTM23.suppdm
+	where qnam='RANDDTC')b
+	on a.usubjid=b.usubjid )
+	;
+	quit;
+
+	proc sql ;
+	create table dm_suppdm as 
+	select a.studyid , a.usubjid ,a.subjid, a.siteid , a.brthdtc , a.age 
+	, a.ageu , a.sex , a.race , b.raceoth , b.randdtc, a.arm , a.rfstdtc,a.rfendtc,
+	case when a.rfstdtc^='' then 'y' else '' end as safety_flag , b.intention_treat_flag,
+	c.resp_eff_fl
+	from sdtm23.dm a
+	left join suppdm_transposed b
+	on a.usubjid=b.usubjid 
+	left join xp_chg c
+	on a.usubjid=c.usubjid ;
+	quit ;
+
+----------------
+	data adam23.adsl;
+	set empty_adsl dm_suppdm ;
+	format brthdt randdt trtsdt trtedt yymmdd10. agegr1n agegr1n. ;
+/* 	STUDYID */
+/* 	USUBJID */
+/* 	SUBJID */
+/* 	SITEID */
+/* 	COUNTRY */
+	BRTHDT=input(brthdtc, yymmdd10.);
+ 	AGEGR1 =put(age,agegr.);
+ 	AGEGR1N =age ;
+/* 	SEX */
+/* 	RACE */
+/* 	RACEOTH */
+	RANDDT=input(randdtc, yymmdd10.);
+	TRTSDT=input(trtsdtc,yymmdd10.);
+	TRTEDT=input(trtedt , yymmdd10.) ;
+/* 	ARM */
+	TRT01P=arm;
+	TRT01A=arm;
+	TRT01PN=input(put(arm,$armn.),best.);
+	TRT01AN=input(put(arm,$armn.),best.);
+	ITTFL=intention_trt_flag;
+	SAFFL=safety_flag;
+	RESPFL=resp_eff_fl;
+	run;
